@@ -38,7 +38,7 @@ jobs:
           diff <(gofumpt -d .) <(echo -n)
 
       - name: Test
-        run: go test -race -coverprofile=coverage.out ./...
+        run: go test -race -coverprofile=coverage.out -coverpkg=github.com/rdapapi/rdapapi-go ./...
 
       - name: Check coverage
         run: |
