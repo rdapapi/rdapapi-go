@@ -1,6 +1,5 @@
 package rdapapi
 
-
 // APIError is the base error type for all RDAP API errors.
 type APIError struct {
 	StatusCode int
