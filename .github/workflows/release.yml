@@ -22,17 +22,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go-version }}
+          cache: false
 
       - name: Vet
         run: go vet ./...
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: latest
+          version: v2.10
 
       - name: Test
-        run: go test -race -coverprofile=coverage.out ./...
+        run: go test -race -coverprofile=coverage.out -coverpkg=github.com/rdapapi/rdapapi-go ./...
 
       - name: Check coverage
         run: |
