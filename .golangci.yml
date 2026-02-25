@@ -9,6 +9,10 @@ linters:
     - staticcheck
     - unused
 
+  exclusions:
+    paths:
+      - examples
+
 formatters:
   enable:
     - gofumpt
@@ -16,7 +20,3 @@ formatters:
   settings:
     gofumpt:
       extra-rules: true
-
-issues:
-  exclude-dirs:
-    - examples
