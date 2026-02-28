@@ -3,6 +3,7 @@ package rdapapi
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestDomainResponseUnmarshal(t *testing.T) {
@@ -412,6 +413,77 @@ func TestMarshalRoundTrip(t *testing.T) {
 		t.Error("Meta.Followed should be false after round-trip")
 	}
 }
+
+func TestDatesConvenienceMethods(t *testing.T) {
+	s := func(v string) *string { return &v }
+
+	d := Dates{
+		Registered: s("2020-01-01T00:00:00Z"),
+		Expires:    s("2028-09-14T04:00:00Z"),
+		Updated:    s("2024-02-20T10:16:08Z"),
+	}
+
+	reg, ok := d.RegisteredAt()
+	if !ok {
+		t.Fatal("RegisteredAt returned false")
+	}
+	if reg.Year() != 2020 {
+		t.Errorf("RegisteredAt year = %d, want 2020", reg.Year())
+	}
+
+	exp, ok := d.ExpiresAt()
+	if !ok {
+		t.Fatal("ExpiresAt returned false")
+	}
+	if exp.Year() != 2028 {
+		t.Errorf("ExpiresAt year = %d, want 2028", exp.Year())
+	}
+
+	upd, ok := d.UpdatedAt()
+	if !ok {
+		t.Fatal("UpdatedAt returned false")
+	}
+	if upd.Year() != 2024 {
+		t.Errorf("UpdatedAt year = %d, want 2024", upd.Year())
+	}
+
+	days, ok := d.ExpiresInDays()
+	if !ok {
+		t.Fatal("ExpiresInDays returned false")
+	}
+	if days <= 0 {
+		t.Errorf("ExpiresInDays = %d, want > 0", days)
+	}
+}
+
+func TestDatesNullFieldsReturnFalse(t *testing.T) {
+	d := Dates{}
+
+	if _, ok := d.RegisteredAt(); ok {
+		t.Error("RegisteredAt should return false for nil")
+	}
+	if _, ok := d.ExpiresAt(); ok {
+		t.Error("ExpiresAt should return false for nil")
+	}
+	if _, ok := d.ExpiresInDays(); ok {
+		t.Error("ExpiresInDays should return false for nil")
+	}
+}
+
+func TestDatesInvalidStringReturnsFalse(t *testing.T) {
+	s := func(v string) *string { return &v }
+	d := Dates{Registered: s("not-a-date"), Expires: s("garbage")}
+
+	if _, ok := d.RegisteredAt(); ok {
+		t.Error("RegisteredAt should return false for invalid string")
+	}
+	if _, ok := d.ExpiresInDays(); ok {
+		t.Error("ExpiresInDays should return false for invalid string")
+	}
+}
+
+// Ensure the time import is used in tests.
+var _ = time.Now
 
 // assertStringPtr is a helper for checking *string values.
 func assertStringPtr(t *testing.T, field string, got *string, want string) {

@@ -1,5 +1,10 @@
 package rdapapi
 
+import (
+	"math"
+	"time"
+)
+
 // Meta contains metadata about the RDAP lookup.
 type Meta struct {
 	RDAPServer          string  `json:"rdap_server"`
@@ -16,6 +21,46 @@ type Dates struct {
 	Registered *string `json:"registered"`
 	Expires    *string `json:"expires"`
 	Updated    *string `json:"updated"`
+}
+
+// RegisteredAt parses Registered into a time.Time.
+// Returns the zero value and false if the field is nil or unparseable.
+func (d Dates) RegisteredAt() (time.Time, bool) {
+	return parseISO(d.Registered)
+}
+
+// ExpiresAt parses Expires into a time.Time.
+// Returns the zero value and false if the field is nil or unparseable.
+func (d Dates) ExpiresAt() (time.Time, bool) {
+	return parseISO(d.Expires)
+}
+
+// UpdatedAt parses Updated into a time.Time.
+// Returns the zero value and false if the field is nil or unparseable.
+func (d Dates) UpdatedAt() (time.Time, bool) {
+	return parseISO(d.Updated)
+}
+
+// ExpiresInDays returns the number of days until expiration.
+// Returns -1 and false if the expiry date is nil or unparseable.
+func (d Dates) ExpiresInDays() (int, bool) {
+	t, ok := d.ExpiresAt()
+	if !ok {
+		return -1, false
+	}
+	days := int(math.Floor(time.Until(t).Hours() / 24))
+	return days, true
+}
+
+func parseISO(s *string) (time.Time, bool) {
+	if s == nil {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, *s)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 // Registrar contains domain registrar information.
