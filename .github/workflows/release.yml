@@ -9,7 +9,21 @@ permissions:
   contents: write
 
 jobs:
+  verify-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check source version matches tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          SOURCE=$(grep 'const Version' version.go | cut -d'"' -f2)
+          if [ "$TAG" != "$SOURCE" ]; then
+            echo "::error::Tag v$TAG does not match source version $SOURCE — bump version.go first"
+            exit 1
+          fi
+
   test:
+    needs: verify-version
     name: Test (Go ${{ matrix.go-version }})
     runs-on: ubuntu-latest
     strategy:
