@@ -140,7 +140,7 @@ func (c *Client) handleError(resp *http.Response, body []byte) error {
 	}
 
 	var retryAfter int
-	if resp.StatusCode == 429 {
+	if resp.StatusCode == 429 || resp.StatusCode == 503 {
 		if v := resp.Header.Get("Retry-After"); v != "" {
 			retryAfter, _ = strconv.Atoi(v)
 		}

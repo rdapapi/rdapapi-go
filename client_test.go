@@ -568,6 +568,35 @@ func TestErrorResponses(t *testing.T) {
 			},
 		},
 		{
+			name:    "503 TemporarilyUnavailableError",
+			status:  503,
+			body:    `{"error":"temporarily_unavailable","message":"Data for this domain is temporarily unavailable."}`,
+			headers: map[string]string{"Retry-After": "300"},
+			checkErr: func(t *testing.T, err error) {
+				var target *TemporarilyUnavailableError
+				if !errors.As(err, &target) {
+					t.Fatal("expected TemporarilyUnavailableError")
+				}
+				if target.RetryAfter != 300 {
+					t.Errorf("RetryAfter = %d, want 300", target.RetryAfter)
+				}
+			},
+		},
+		{
+			name:   "503 TemporarilyUnavailableError without Retry-After",
+			status: 503,
+			body:   `{"error":"temporarily_unavailable","message":"Data for this domain is temporarily unavailable."}`,
+			checkErr: func(t *testing.T, err error) {
+				var target *TemporarilyUnavailableError
+				if !errors.As(err, &target) {
+					t.Fatal("expected TemporarilyUnavailableError")
+				}
+				if target.RetryAfter != 0 {
+					t.Errorf("RetryAfter = %d, want 0", target.RetryAfter)
+				}
+			},
+		},
+		{
 			name:   "500 unknown error",
 			status: 500,
 			body:   `{"error":"server_error","message":"Internal server error"}`,

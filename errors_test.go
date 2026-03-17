@@ -42,6 +42,7 @@ func TestNewErrorTypedErrors(t *testing.T) {
 		{404, "not_found", "not found", 0, "NotFoundError"},
 		{429, "rate_limited", "too many", 30, "RateLimitError"},
 		{502, "upstream_error", "upstream fail", 0, "UpstreamError"},
+		{503, "temporarily_unavailable", "temporarily unavailable", 300, "TemporarilyUnavailableError"},
 	}
 
 	for _, tt := range tests {
@@ -94,6 +95,15 @@ func TestNewErrorTypedErrors(t *testing.T) {
 					t.Fatal("errors.As failed for UpstreamError")
 				}
 				checkBase(t, target.APIError, tt)
+			case 503:
+				var target *TemporarilyUnavailableError
+				if !errors.As(err, &target) {
+					t.Fatal("errors.As failed for TemporarilyUnavailableError")
+				}
+				checkBase(t, target.APIError, tt)
+				if target.RetryAfter != 300 {
+					t.Errorf("RetryAfter = %d, want 300", target.RetryAfter)
+				}
 			}
 
 			// Typed errors embed *APIError, accessible via the field.

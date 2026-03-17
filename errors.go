@@ -33,6 +33,9 @@ type NotFoundError struct{ *APIError }
 // RateLimitError is returned when rate limit or monthly quota is exceeded (HTTP 429).
 type RateLimitError struct{ *APIError }
 
+// TemporarilyUnavailableError is returned when the domain data is temporarily unavailable (HTTP 503).
+type TemporarilyUnavailableError struct{ *APIError }
+
 // UpstreamError is returned when the upstream RDAP server fails (HTTP 502).
 type UpstreamError struct{ *APIError }
 
@@ -58,6 +61,8 @@ func newError(statusCode int, code, message string, retryAfter int) error {
 		return &RateLimitError{base}
 	case 502:
 		return &UpstreamError{base}
+	case 503:
+		return &TemporarilyUnavailableError{base}
 	default:
 		return base
 	}
