@@ -144,6 +144,7 @@ if err != nil {
 | `NotFoundError` | 404 | No RDAP data found |
 | `RateLimitError` | 429 | Rate limit or quota exceeded |
 | `UpstreamError` | 502 | Upstream RDAP server failure |
+| `TemporarilyUnavailableError` | 503 | Domain data temporarily unavailable |
 
 All typed errors embed `*APIError` which provides `StatusCode`, `Code`, `Message`, and `RetryAfter` fields.
 
@@ -155,6 +156,14 @@ Fields that may be absent in API responses use Go pointer types (`*string`, `*in
 if domain.Dates.Expires != nil {
     fmt.Println("Expires:", *domain.Dates.Expires)
 }
+```
+
+## Development
+
+Set up pre-commit hooks (runs lint + tests before each commit):
+
+```bash
+git config core.hooksPath .githooks
 ```
 
 ## License

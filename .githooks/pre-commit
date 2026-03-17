@@ -1,0 +1,21 @@
+#!/bin/bash
+set -e
+
+echo "Running vet..."
+go vet ./...
+
+echo "Running format check..."
+UNFORMATTED=$(gofumpt -l . 2>/dev/null || gofmt -l .)
+if [ -n "$UNFORMATTED" ]; then
+  echo "Files need formatting:"
+  echo "$UNFORMATTED"
+  exit 1
+fi
+
+echo "Running tests..."
+go test -race ./...
+
+echo "Running build..."
+go build ./...
+
+echo "All checks passed."
