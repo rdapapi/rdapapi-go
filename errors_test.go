@@ -168,6 +168,53 @@ func TestTypedErrorsDoNotMatchEachOther(t *testing.T) {
 	}
 }
 
+func TestNotSupportedErrorFor404WithNotSupportedCode(t *testing.T) {
+	err := newError(404, "not_supported", "TLD .nope is not supported", 0)
+
+	var ns *NotSupportedError
+	if !errors.As(err, &ns) {
+		t.Fatal("errors.As failed for NotSupportedError")
+	}
+	if ns.Code != "not_supported" {
+		t.Errorf("Code = %q, want %q", ns.Code, "not_supported")
+	}
+	if ns.StatusCode != 404 {
+		t.Errorf("StatusCode = %d, want 404", ns.StatusCode)
+	}
+
+	// Backwards compatible: errors.As with *NotFoundError target also matches
+	// because NotSupportedError unwraps to *NotFoundError.
+	var nf *NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatal("errors.As should match *NotFoundError via Unwrap")
+	}
+}
+
+func TestNotFoundErrorForPlainNotFoundCode(t *testing.T) {
+	err := newError(404, "not_found", "Not found", 0)
+
+	var nf *NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatal("errors.As failed for NotFoundError")
+	}
+
+	// Should NOT be a NotSupportedError.
+	var ns *NotSupportedError
+	if errors.As(err, &ns) {
+		t.Error("plain not_found should not match NotSupportedError")
+	}
+}
+
+func TestNotSupportedErrorUnwrapChain(t *testing.T) {
+	err := newError(404, "not_supported", "not supported", 0).(*NotSupportedError)
+
+	// Unwrap returns the inner NotFoundError.
+	inner := err.Unwrap()
+	if _, ok := inner.(*NotFoundError); !ok {
+		t.Fatalf("Unwrap returned %T, want *NotFoundError", inner)
+	}
+}
+
 func TestAPIErrorFormatting(t *testing.T) {
 	err := &APIError{
 		StatusCode: 429,

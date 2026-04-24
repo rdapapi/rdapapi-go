@@ -233,3 +233,73 @@ type BulkDomainResponse struct {
 	Results []BulkDomainResult `json:"results"`
 	Summary BulkDomainSummary  `json:"summary"`
 }
+
+// AvailabilityLevel is a qualitative bucket describing how often a field is
+// populated in a TLD's RDAP responses.
+type AvailabilityLevel string
+
+const (
+	AvailabilityAlways    AvailabilityLevel = "always"
+	AvailabilityUsually   AvailabilityLevel = "usually"
+	AvailabilitySometimes AvailabilityLevel = "sometimes"
+	AvailabilityNever     AvailabilityLevel = "never"
+)
+
+// FieldAvailability reports how often each common domain field is populated in
+// a TLD's RDAP responses.
+type FieldAvailability struct {
+	Registrar    AvailabilityLevel `json:"registrar"`
+	RegisteredAt AvailabilityLevel `json:"registered_at"`
+	ExpiresAt    AvailabilityLevel `json:"expires_at"`
+	Nameservers  AvailabilityLevel `json:"nameservers"`
+	Status       AvailabilityLevel `json:"status"`
+}
+
+// TldEntry is a single TLD entry from the /tlds catalog.
+type TldEntry struct {
+	TLD               string             `json:"tld"`
+	SupportedSince    string             `json:"supported_since"`
+	RDAPServerHost    string             `json:"rdap_server_host"`
+	RDAPServerURL     string             `json:"rdap_server_url"`
+	FieldAvailability *FieldAvailability `json:"field_availability"`
+}
+
+// TldThresholds lists the percentage cutoffs used to pick each availability
+// label.
+type TldThresholds struct {
+	Always    float64 `json:"always"`
+	Usually   float64 `json:"usually"`
+	Sometimes float64 `json:"sometimes"`
+}
+
+// TldListMeta is the metadata envelope for GET /tlds.
+type TldListMeta struct {
+	ComputedAt string        `json:"computed_at"`
+	Count      int           `json:"count"`
+	Coverage   float64       `json:"coverage"`
+	Thresholds TldThresholds `json:"thresholds"`
+}
+
+// TldMeta is the metadata envelope for GET /tlds/{tld}.
+type TldMeta struct {
+	ComputedAt string        `json:"computed_at"`
+	Thresholds TldThresholds `json:"thresholds"`
+}
+
+// TldListResponse is the response from GET /tlds.
+type TldListResponse struct {
+	Data []TldEntry  `json:"data"`
+	Meta TldListMeta `json:"meta"`
+	// ETag is the value of the server's ETag header. Pass back via
+	// WithIfNoneMatch to skip unchanged transfers on a later call.
+	ETag string `json:"-"`
+}
+
+// TldResponse is the response from GET /tlds/{tld}.
+type TldResponse struct {
+	Data TldEntry `json:"data"`
+	Meta TldMeta  `json:"meta"`
+	// ETag is the value of the server's ETag header. Pass back via
+	// WithIfNoneMatch to skip unchanged transfers on a later call.
+	ETag string `json:"-"`
+}

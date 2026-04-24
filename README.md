@@ -112,16 +112,65 @@ for _, r := range resp.Results {
 }
 ```
 
+## Supported TLDs Catalog
+
+List every TLD the API can resolve, with the date support was added and a qualitative summary of which fields the registry's RDAP server populates. Does not count against your monthly quota.
+
+```go
+tlds, err := client.TLDs(ctx)
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("%d TLDs, coverage %.0f%%\n", tlds.Meta.Count, tlds.Meta.Coverage*100)
+for _, tld := range tlds.Data {
+    if tld.FieldAvailability != nil {
+        fmt.Printf("%s: expires_at=%s\n", tld.TLD, tld.FieldAvailability.ExpiresAt)
+    }
+}
+```
+
+Filter to recent additions or to a single registry:
+
+```go
+recent, _ := client.TLDs(ctx, rdapapi.WithSince("2026-04-01T00:00:00Z"))
+verisign, _ := client.TLDs(ctx, rdapapi.WithServer("rdap.verisign.com"))
+```
+
+Pass back the previous ETag to skip the transfer when nothing has changed. The method returns `(nil, nil)` on 304:
+
+```go
+first, _ := client.TLDs(ctx)
+later, _ := client.TLDs(ctx, rdapapi.WithIfNoneMatch(first.ETag))
+if later == nil {
+    fmt.Println("No change since last poll")
+}
+```
+
+Look up a single TLD:
+
+```go
+com, _ := client.TLD(ctx, "com")
+fmt.Println(com.Data.RDAPServerHost) // "rdap.verisign.com"
+```
+
 ## Error Handling
 
 All API errors are returned as typed errors that can be checked with `errors.As`:
 
 ```go
-domain, err := client.Domain(ctx, "example.com")
+domain, err := client.Domain(ctx, "example.nope")
 if err != nil {
+    // Check NotSupportedError first: it's a 404 variant for uncovered namespaces.
+    var notSupported *rdapapi.NotSupportedError
+    if errors.As(err, &notSupported) {
+        fmt.Println("TLD not covered by RDAP:", notSupported.Message)
+        return
+    }
+
     var notFound *rdapapi.NotFoundError
     if errors.As(err, &notFound) {
-        fmt.Println("Not found:", notFound.Message)
+        fmt.Println("Domain not registered:", notFound.Message)
     }
 
     var rateLimited *rdapapi.RateLimitError
@@ -136,12 +185,15 @@ if err != nil {
 }
 ```
 
+`NotSupportedError` unwraps to `*NotFoundError`, so existing code that catches 404 via `errors.As(err, &notFound)` still matches.
+
 | Error Type | HTTP Status | Description |
 |---|---|---|
 | `ValidationError` | 400 | Invalid input |
 | `AuthenticationError` | 401 | Invalid or missing API key |
 | `SubscriptionRequiredError` | 403 | No active subscription |
-| `NotFoundError` | 404 | No RDAP data found |
+| `NotFoundError` | 404 | Namespace is covered but no record exists |
+| `NotSupportedError` | 404 | Namespace (TLD, IP range, ASN range) is not covered by RDAP |
 | `RateLimitError` | 429 | Rate limit or quota exceeded |
 | `UpstreamError` | 502 | Upstream RDAP server failure |
 | `TemporarilyUnavailableError` | 503 | Domain data temporarily unavailable |

@@ -59,7 +59,10 @@ func NewClient(apiKey string, opts ...Option) *Client {
 
 // requestOptions holds per-request options.
 type requestOptions struct {
-	follow bool
+	follow      bool
+	since       string
+	server      string
+	ifNoneMatch string
 }
 
 // RequestOption configures a single request.
@@ -68,6 +71,25 @@ type RequestOption func(*requestOptions)
 // WithFollow enables registrar follow-through for domain lookups.
 func WithFollow() RequestOption {
 	return func(o *requestOptions) { o.follow = true }
+}
+
+// WithSince filters TLDs to those added strictly after the given ISO 8601
+// timestamp. Applies to TLDs only.
+func WithSince(since string) RequestOption {
+	return func(o *requestOptions) { o.since = since }
+}
+
+// WithServer filters TLDs to those served by the given RDAP server hostname
+// (case-insensitive). Applies to TLDs only.
+func WithServer(host string) RequestOption {
+	return func(o *requestOptions) { o.server = host }
+}
+
+// WithIfNoneMatch sets the If-None-Match header for a conditional request.
+// When the server's ETag matches, the call returns (nil, nil). Applies to
+// TLDs only.
+func WithIfNoneMatch(etag string) RequestOption {
+	return func(o *requestOptions) { o.ifNoneMatch = etag }
 }
 
 func (c *Client) doGet(ctx context.Context, path string, query map[string]string) ([]byte, error) {
@@ -127,6 +149,51 @@ func (c *Client) doRequest(req *http.Request) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// doConditionalGet performs a GET that may return 304 Not Modified. Returns
+// body, etag, notModified flag, and error. When notModified is true, the
+// caller should skip decoding and return nil to the user.
+func (c *Client) doConditionalGet(ctx context.Context, path string, query map[string]string, ifNoneMatch string) ([]byte, string, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, "", false, fmt.Errorf("rdapapi: creating request: %w", err)
+	}
+	if len(query) > 0 {
+		q := req.URL.Query()
+		for k, v := range query {
+			q.Set(k, v)
+		}
+		req.URL.RawQuery = q.Encode()
+	}
+	if ifNoneMatch != "" {
+		req.Header.Set("If-None-Match", ifNoneMatch)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, "", false, fmt.Errorf("rdapapi: sending request: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // read-only body
+
+	if resp.StatusCode == http.StatusNotModified {
+		return nil, resp.Header.Get("ETag"), true, nil
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", false, fmt.Errorf("rdapapi: reading response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, "", false, c.handleError(resp, data)
+	}
+
+	return data, resp.Header.Get("ETag"), false, nil
 }
 
 func (c *Client) handleError(resp *http.Response, body []byte) error {
@@ -232,6 +299,68 @@ func (c *Client) Entity(ctx context.Context, handle string) (*EntityResponse, er
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, fmt.Errorf("rdapapi: decoding response: %w", err)
 	}
+	return &result, nil
+}
+
+// TLDs lists every TLD the API can resolve via RDAP.
+//
+// Does not count against the monthly quota. Use WithSince, WithServer, and
+// WithIfNoneMatch to filter or skip unchanged transfers. Returns (nil, nil)
+// when an If-None-Match ETag matches the server's current value (HTTP 304).
+func (c *Client) TLDs(ctx context.Context, opts ...RequestOption) (*TldListResponse, error) {
+	o := &requestOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	query := map[string]string{}
+	if o.since != "" {
+		query["since"] = o.since
+	}
+	if o.server != "" {
+		query["server"] = o.server
+	}
+
+	data, etag, notModified, err := c.doConditionalGet(ctx, "/tlds", query, o.ifNoneMatch)
+	if err != nil {
+		return nil, err
+	}
+	if notModified {
+		return nil, nil
+	}
+
+	var result TldListResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("rdapapi: decoding response: %w", err)
+	}
+	result.ETag = etag
+	return &result, nil
+}
+
+// TLD returns catalog metadata for a single TLD.
+//
+// Does not count against the monthly quota. Returns (nil, nil) when an
+// If-None-Match ETag matches (HTTP 304). Returns a *NotFoundError when no
+// RDAP server is registered for the TLD.
+func (c *Client) TLD(ctx context.Context, tld string, opts ...RequestOption) (*TldResponse, error) {
+	o := &requestOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	data, etag, notModified, err := c.doConditionalGet(ctx, "/tlds/"+tld, nil, o.ifNoneMatch)
+	if err != nil {
+		return nil, err
+	}
+	if notModified {
+		return nil, nil
+	}
+
+	var result TldResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("rdapapi: decoding response: %w", err)
+	}
+	result.ETag = etag
 	return &result, nil
 }
 

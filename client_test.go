@@ -1044,3 +1044,351 @@ func TestBulkDomainsErrorResponse(t *testing.T) {
 		t.Errorf("expected AuthenticationError, got %T: %v", err, err)
 	}
 }
+
+// --- NotSupportedError routing ---
+
+func TestDomainReturnsNotSupportedErrorForNotSupportedCode(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/example.nope": {
+			status: 404,
+			body:   `{"error":"not_supported","message":"The TLD '.nope' is not supported."}`,
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "example.nope")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var ns *NotSupportedError
+	if !errors.As(err, &ns) {
+		t.Fatalf("expected NotSupportedError, got %T", err)
+	}
+
+	var nf *NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatal("NotSupportedError should also satisfy *NotFoundError target")
+	}
+}
+
+func TestIPReturnsNotSupportedErrorForNotSupportedCode(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/ip/203.0.113.1": {
+			status: 404,
+			body:   `{"error":"not_supported","message":"No RIR covers this IP range."}`,
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.IP(context.Background(), "203.0.113.1")
+	var ns *NotSupportedError
+	if !errors.As(err, &ns) {
+		t.Fatalf("expected NotSupportedError, got %T", err)
+	}
+}
+
+// --- TLDs endpoint ---
+
+const tldsBody = `{
+  "data": [
+    {
+      "tld": "com",
+      "supported_since": "2026-03-07T00:00:00Z",
+      "rdap_server_host": "rdap.verisign.com",
+      "rdap_server_url": "https://rdap.verisign.com/com/v1/",
+      "field_availability": {
+        "registrar": "sometimes",
+        "registered_at": "always",
+        "expires_at": "always",
+        "nameservers": "always",
+        "status": "always"
+      }
+    },
+    {
+      "tld": "fr",
+      "supported_since": "2026-03-07T00:00:00Z",
+      "rdap_server_host": "rdap.nic.fr",
+      "rdap_server_url": "https://rdap.nic.fr/",
+      "field_availability": null
+    }
+  ],
+  "meta": {
+    "computed_at": "2026-04-22T10:00:00Z",
+    "count": 2,
+    "coverage": 0.5,
+    "thresholds": {"always": 0.99, "usually": 0.8, "sometimes": 0.0}
+  }
+}`
+
+const tldBody = `{
+  "data": {
+    "tld": "com",
+    "supported_since": "2026-03-07T00:00:00Z",
+    "rdap_server_host": "rdap.verisign.com",
+    "rdap_server_url": "https://rdap.verisign.com/com/v1/",
+    "field_availability": {
+      "registrar": "sometimes",
+      "registered_at": "always",
+      "expires_at": "always",
+      "nameservers": "always",
+      "status": "always"
+    }
+  },
+  "meta": {
+    "computed_at": "2026-04-22T10:00:00Z",
+    "thresholds": {"always": 0.99, "usually": 0.8, "sometimes": 0.0}
+  }
+}`
+
+func TestTLDsListSuccess(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/tlds": {
+			status:  200,
+			body:    tldsBody,
+			headers: map[string]string{"ETag": `"abc"`},
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	result, err := c.TLDs(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.ETag != `"abc"` {
+		t.Errorf("ETag = %q, want %q", result.ETag, `"abc"`)
+	}
+	if result.Meta.Count != 2 {
+		t.Errorf("Count = %d, want 2", result.Meta.Count)
+	}
+	if result.Meta.Coverage != 0.5 {
+		t.Errorf("Coverage = %f, want 0.5", result.Meta.Coverage)
+	}
+	if result.Meta.Thresholds.Always != 0.99 {
+		t.Errorf("Thresholds.Always = %f, want 0.99", result.Meta.Thresholds.Always)
+	}
+	if len(result.Data) != 2 {
+		t.Fatalf("len(Data) = %d, want 2", len(result.Data))
+	}
+	if result.Data[0].TLD != "com" {
+		t.Errorf("Data[0].TLD = %q, want %q", result.Data[0].TLD, "com")
+	}
+	if result.Data[0].FieldAvailability == nil {
+		t.Fatal("expected Data[0].FieldAvailability to be non-nil")
+	}
+	if result.Data[0].FieldAvailability.RegisteredAt != AvailabilityAlways {
+		t.Errorf("FieldAvailability.RegisteredAt = %q, want always", result.Data[0].FieldAvailability.RegisteredAt)
+	}
+	if result.Data[1].FieldAvailability != nil {
+		t.Error("expected Data[1].FieldAvailability to be nil")
+	}
+}
+
+func TestTLDsForwardsSinceAndServer(t *testing.T) {
+	var gotQuery string
+	srv := mockServer(t, map[string]mockRoute{
+		"/tlds": {
+			status: 200,
+			body:   tldsBody,
+			check: func(t *testing.T, r *http.Request) {
+				gotQuery = r.URL.RawQuery
+			},
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.TLDs(context.Background(),
+		WithSince("2026-04-01T00:00:00Z"),
+		WithServer("rdap.verisign.com"),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(gotQuery, "since=2026-04-01T00%3A00%3A00Z") {
+		t.Errorf("query = %q, want to contain since=", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "server=rdap.verisign.com") {
+		t.Errorf("query = %q, want to contain server=", gotQuery)
+	}
+}
+
+func TestTLDsReturnsNilOnNotModified(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/tlds": {
+			status: 304,
+			check: func(t *testing.T, r *http.Request) {
+				if got := r.Header.Get("If-None-Match"); got != `"abc"` {
+					t.Errorf("If-None-Match = %q, want %q", got, `"abc"`)
+				}
+			},
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	result, err := c.TLDs(context.Background(), WithIfNoneMatch(`"abc"`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != nil {
+		t.Errorf("expected nil on 304, got %+v", result)
+	}
+}
+
+func TestTLDsRaisesTypedErrorOnFailure(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/tlds": {status: 401, body: `{"error":"unauthenticated","message":"Invalid token."}`},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.TLDs(context.Background())
+	var target *AuthenticationError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected AuthenticationError, got %T", err)
+	}
+}
+
+func TestTLDsInvalidBaseURL(t *testing.T) {
+	c := NewClient("key", WithBaseURL("://invalid"))
+	_, err := c.TLDs(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestTLDsSendErrorWhenTransportFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("hijacker not supported")
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Fatal(err)
+		}
+		conn.Close() //nolint:errcheck // test cleanup
+	}))
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.TLDs(context.Background())
+	if err == nil {
+		t.Fatal("expected transport error")
+	}
+}
+
+func TestTLDsInvalidJSON(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/tlds": {status: 200, body: `{ not json`},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.TLDs(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "decoding response") {
+		t.Fatalf("expected decode error, got %v", err)
+	}
+}
+
+func TestTLDsConditionalGetReadErrorOnNotModified(t *testing.T) {
+	// Covers the io.ReadAll error path when status is not 304 and not 304 path triggers.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.TLDs(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "reading response") {
+		t.Fatalf("expected read error, got %v", err)
+	}
+}
+
+func TestTLDSingleLookup(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/tlds/com": {
+			status:  200,
+			body:    tldBody,
+			headers: map[string]string{"ETag": `"com-1"`},
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	result, err := c.TLD(context.Background(), "com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Data.TLD != "com" {
+		t.Errorf("Data.TLD = %q, want com", result.Data.TLD)
+	}
+	if result.Meta.Thresholds.Usually != 0.8 {
+		t.Errorf("Thresholds.Usually = %f, want 0.8", result.Meta.Thresholds.Usually)
+	}
+	if result.ETag != `"com-1"` {
+		t.Errorf("ETag = %q, want %q", result.ETag, `"com-1"`)
+	}
+}
+
+func TestTLDSingleLookupNotModified(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/tlds/com": {status: 304},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	result, err := c.TLD(context.Background(), "com", WithIfNoneMatch(`"com-1"`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != nil {
+		t.Error("expected nil on 304")
+	}
+}
+
+func TestTLDSingleLookupNotFound(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/tlds/nope": {
+			status: 404,
+			body:   `{"error":"not_found","message":"No RDAP server is registered for the TLD 'nope'."}`,
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.TLD(context.Background(), "nope")
+	var target *NotFoundError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected NotFoundError, got %T", err)
+	}
+}
+
+func TestTLDInvalidBaseURL(t *testing.T) {
+	c := NewClient("key", WithBaseURL("://invalid"))
+	_, err := c.TLD(context.Background(), "com")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestTLDInvalidJSON(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/tlds/com": {status: 200, body: `{ broken json`},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.TLD(context.Background(), "com")
+	if err == nil || !strings.Contains(err.Error(), "decoding response") {
+		t.Fatalf("expected decode error, got %v", err)
+	}
+}
