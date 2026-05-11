@@ -29,7 +29,8 @@ func main() {
 			fmt.Printf(".%s via %s (not enough data yet)\n", tld.TLD, tld.RDAPServerHost)
 			continue
 		}
-		fmt.Printf(".%s via %s: registrar=%s, expires_at=%s\n",
+		fmt.Printf(
+			".%s via %s: registrar=%s, expires_at=%s\n",
 			tld.TLD, tld.RDAPServerHost,
 			tld.FieldAvailability.Registrar,
 			tld.FieldAvailability.ExpiresAt,

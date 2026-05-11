@@ -1204,7 +1204,8 @@ func TestTLDsForwardsSinceAndServer(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient("key", WithBaseURL(srv.URL))
-	_, err := c.TLDs(context.Background(),
+	_, err := c.TLDs(
+		context.Background(),
 		WithSince("2026-04-01T00:00:00Z"),
 		WithServer("rdap.verisign.com"),
 	)
