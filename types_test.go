@@ -16,7 +16,7 @@ func TestDomainResponseUnmarshal(t *testing.T) {
 			"name": "Example Registrar",
 			"iana_id": "9999",
 			"abuse_email": "abuse@example.com",
-			"abuse_phone": "+1.5551234567",
+			"abuse_phone": "+12086851750",
 			"url": "https://example-registrar.com"
 		},
 		"dates": {
@@ -32,7 +32,7 @@ func TestDomainResponseUnmarshal(t *testing.T) {
 				"name": "John Doe",
 				"organization": "Example Inc.",
 				"email": "john@example.com",
-				"phone": "+1.5559876543",
+				"phone": "+12083895740",
 				"address": "123 Main St",
 				"contact_url": "https://example.com/contact",
 				"country_code": "US"
@@ -64,7 +64,7 @@ func TestDomainResponseUnmarshal(t *testing.T) {
 	assertStringPtr(t, "Registrar.Name", resp.Registrar.Name, "Example Registrar")
 	assertStringPtr(t, "Registrar.IANAID", resp.Registrar.IANAID, "9999")
 	assertStringPtr(t, "Registrar.AbuseEmail", resp.Registrar.AbuseEmail, "abuse@example.com")
-	assertStringPtr(t, "Registrar.AbusePhone", resp.Registrar.AbusePhone, "+1.5551234567")
+	assertStringPtr(t, "Registrar.AbusePhone", resp.Registrar.AbusePhone, "+12086851750")
 	assertStringPtr(t, "Registrar.URL", resp.Registrar.URL, "https://example-registrar.com")
 	assertStringPtr(t, "Dates.Registered", resp.Dates.Registered, "1995-08-14T04:00:00Z")
 	assertStringPtr(t, "Dates.Expires", resp.Dates.Expires, "2025-08-13T04:00:00Z")
@@ -252,7 +252,7 @@ func TestEntityResponseUnmarshal(t *testing.T) {
 		"name": "Google LLC",
 		"organization": "Google LLC",
 		"email": "arin-contact@google.com",
-		"phone": "+1-650-253-0000",
+		"phone": "+16502530000",
 		"address": "1600 Amphitheatre Parkway",
 		"contact_url": "https://google.com",
 		"country_code": "US",
@@ -277,7 +277,7 @@ func TestEntityResponseUnmarshal(t *testing.T) {
 	assertStringPtr(t, "Name", resp.Name, "Google LLC")
 	assertStringPtr(t, "Organization", resp.Organization, "Google LLC")
 	assertStringPtr(t, "Email", resp.Email, "arin-contact@google.com")
-	assertStringPtr(t, "Phone", resp.Phone, "+1-650-253-0000")
+	assertStringPtr(t, "Phone", resp.Phone, "+16502530000")
 	assertStringPtr(t, "Address", resp.Address, "1600 Amphitheatre Parkway")
 	assertStringPtr(t, "ContactURL", resp.ContactURL, "https://google.com")
 	assertStringPtr(t, "CountryCode", resp.CountryCode, "US")
