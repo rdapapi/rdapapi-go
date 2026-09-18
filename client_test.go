@@ -1096,7 +1096,9 @@ const tldsBody = `{
   "data": [
     {
       "tld": "com",
+      "protocol": "rdap",
       "supported_since": "2026-03-07T00:00:00Z",
+      "server": "rdap.verisign.com",
       "rdap_server_host": "rdap.verisign.com",
       "rdap_server_url": "https://rdap.verisign.com/com/v1/",
       "field_availability": {
@@ -1109,7 +1111,9 @@ const tldsBody = `{
     },
     {
       "tld": "fr",
+      "protocol": "rdap",
       "supported_since": "2026-03-07T00:00:00Z",
+      "server": "rdap.nic.fr",
       "rdap_server_host": "rdap.nic.fr",
       "rdap_server_url": "https://rdap.nic.fr/",
       "field_availability": null
@@ -1126,7 +1130,9 @@ const tldsBody = `{
 const tldBody = `{
   "data": {
     "tld": "com",
+    "protocol": "rdap",
     "supported_since": "2026-03-07T00:00:00Z",
+    "server": "rdap.verisign.com",
     "rdap_server_host": "rdap.verisign.com",
     "rdap_server_url": "https://rdap.verisign.com/com/v1/",
     "field_availability": {
@@ -1178,6 +1184,15 @@ func TestTLDsListSuccess(t *testing.T) {
 	}
 	if result.Data[0].TLD != "com" {
 		t.Errorf("Data[0].TLD = %q, want %q", result.Data[0].TLD, "com")
+	}
+	if result.Data[0].Protocol != ProtocolRDAP {
+		t.Errorf("Data[0].Protocol = %q, want %q", result.Data[0].Protocol, ProtocolRDAP)
+	}
+	if result.Data[0].Server != "rdap.verisign.com" {
+		t.Errorf("Data[0].Server = %q, want %q", result.Data[0].Server, "rdap.verisign.com")
+	}
+	if result.Data[0].RDAPServerURL == nil || *result.Data[0].RDAPServerURL != "https://rdap.verisign.com/com/v1/" {
+		t.Errorf("Data[0].RDAPServerURL = %v, want the verisign URL", result.Data[0].RDAPServerURL)
 	}
 	if result.Data[0].FieldAvailability == nil {
 		t.Fatal("expected Data[0].FieldAvailability to be non-nil")
@@ -1391,5 +1406,490 @@ func TestTLDInvalidJSON(t *testing.T) {
 	_, err := c.TLD(context.Background(), "com")
 	if err == nil || !strings.Contains(err.Error(), "decoding response") {
 		t.Fatalf("expected decode error, got %v", err)
+	}
+}
+
+// --- WHOIS fallback opt-out ---
+
+func TestDomainWithoutWhois(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/example.it": {
+			status: 404,
+			body:   `{"error":"not_supported","message":"The TLD '.it' has no RDAP server."}`,
+			check: func(t *testing.T, r *http.Request) {
+				t.Helper()
+				if got := r.URL.Query().Get("whois"); got != "false" {
+					t.Errorf("whois query = %q, want %q", got, "false")
+				}
+			},
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "example.it", WithoutWhois())
+
+	var ns *NotSupportedError
+	if !errors.As(err, &ns) {
+		t.Fatalf("expected NotSupportedError, got %T", err)
+	}
+}
+
+func TestDomainSendsNoWhoisParamByDefault(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/example.it": {
+			status: 200,
+			body:   `{"domain":"example.it","status":[],"registrar":{},"dates":{},"nameservers":[],"dnssec":null,"entities":{},"meta":{"server":"whois.nic.it","source":"whois"}}`,
+			check: func(t *testing.T, r *http.Request) {
+				t.Helper()
+				if got := r.URL.Query().Get("whois"); got != "" {
+					t.Errorf("whois query = %q, want empty (server default)", got)
+				}
+			},
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	resp, err := c.Domain(context.Background(), "example.it")
+	if err != nil {
+		t.Fatalf("Domain() error: %v", err)
+	}
+	if resp.Meta.Source != ProtocolWHOIS {
+		t.Errorf("Meta.Source = %q, want %q", resp.Meta.Source, ProtocolWHOIS)
+	}
+}
+
+func TestBulkDomainsWithoutWhois(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domains/bulk": {
+			status: 200,
+			body:   `{"results":[],"summary":{"total":0,"successful":0,"failed":0}}`,
+			check: func(t *testing.T, r *http.Request) {
+				t.Helper()
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatalf("failed to decode body: %v", err)
+				}
+				whois, ok := body["whois"].(bool)
+				if !ok || whois {
+					t.Errorf("body.whois = %v, want false", body["whois"])
+				}
+			},
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.BulkDomains(context.Background(), []string{"example.it"}, WithoutWhois())
+	if err != nil {
+		t.Fatalf("BulkDomains() error: %v", err)
+	}
+}
+
+// --- Ping ---
+
+func TestPing(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/ping": {status: 200, body: `{"status":"ok"}`},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	resp, err := c.Ping(context.Background())
+	if err != nil {
+		t.Fatalf("Ping() error: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Errorf("Status = %q, want %q", resp.Status, "ok")
+	}
+}
+
+func TestPingErrorResponse(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/ping": {status: 503, body: `{"error":"service_unavailable","message":"Down for maintenance."}`},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Ping(context.Background())
+	var target *TemporarilyUnavailableError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected TemporarilyUnavailableError, got %T", err)
+	}
+}
+
+func TestPingInvalidJSON(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/ping": {status: 200, body: `{bad`},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Ping(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "decoding response") {
+		t.Fatalf("expected decode error, got %v", err)
+	}
+}
+
+// --- Error code variants sharing a status ---
+
+func TestBulkDomainsPlanUpgradeRequired(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domains/bulk": {
+			status: 403,
+			body:   `{"error":"plan_upgrade_required","message":"Bulk lookups require a Pro or Business plan."}`,
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.BulkDomains(context.Background(), []string{"example.com"})
+
+	var upgrade *PlanUpgradeRequiredError
+	if !errors.As(err, &upgrade) {
+		t.Fatalf("expected PlanUpgradeRequiredError, got %T", err)
+	}
+
+	var sub *SubscriptionRequiredError
+	if !errors.As(err, &sub) {
+		t.Fatal("PlanUpgradeRequiredError should also satisfy *SubscriptionRequiredError")
+	}
+}
+
+func TestDomainQuotaExceeded(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/test.com": {
+			status: 429,
+			body:   `{"error":"quota_exceeded","message":"Monthly request limit of 200000 reached."}`,
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "test.com")
+
+	var quota *QuotaExceededError
+	if !errors.As(err, &quota) {
+		t.Fatalf("expected QuotaExceededError, got %T", err)
+	}
+
+	var rl *RateLimitError
+	if !errors.As(err, &rl) {
+		t.Fatal("QuotaExceededError should also satisfy *RateLimitError")
+	}
+}
+
+func TestBulkDomainsRequestFailed(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domains/bulk": {
+			status: 422,
+			body:   `{"error":"request_failed","message":"The given data was invalid.","errors":{"domains":["The domains field must not have more than 10 items."]}}`,
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.BulkDomains(context.Background(), []string{"example.com"})
+
+	var rf *RequestFailedError
+	if !errors.As(err, &rf) {
+		t.Fatalf("expected RequestFailedError, got %T", err)
+	}
+	if len(rf.Errors["domains"]) != 1 {
+		t.Errorf("Errors[domains] = %v, want one message", rf.Errors["domains"])
+	}
+}
+
+func TestDomainGatewayTimeout(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/slow.com": {
+			status: 504,
+			body:   `{"error":"gateway_timeout","message":"The request did not complete in time."}`,
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "slow.com")
+
+	var te *TimeoutError
+	if !errors.As(err, &te) {
+		t.Fatalf("expected TimeoutError, got %T", err)
+	}
+}
+
+// --- retry_after sources ---
+
+func TestRetryAfterReadFromBodyWhenHeaderAbsent(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/test.com": {
+			status: 502,
+			body:   `{"error":"lookup_failed","message":"RDAP lookup failed.","retry_after":60}`,
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "test.com")
+
+	var up *UpstreamError
+	if !errors.As(err, &up) {
+		t.Fatalf("expected UpstreamError, got %T", err)
+	}
+	if up.RetryAfter != 60 {
+		t.Errorf("RetryAfter = %d, want 60", up.RetryAfter)
+	}
+}
+
+func TestRetryAfterHeaderWinsOverBody(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/test.com": {
+			status:  503,
+			body:    `{"error":"temporarily_unavailable","message":"Try later.","retry_after":300}`,
+			headers: map[string]string{"Retry-After": "120"},
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "test.com")
+
+	var tu *TemporarilyUnavailableError
+	if !errors.As(err, &tu) {
+		t.Fatalf("expected TemporarilyUnavailableError, got %T", err)
+	}
+	if tu.RetryAfter != 120 {
+		t.Errorf("RetryAfter = %d, want 120 (header wins)", tu.RetryAfter)
+	}
+}
+
+func TestErrorCodeSurvivesUnexpectedlyTypedRetryAfter(t *testing.T) {
+	// retry_after decodes into *int; a string there makes json.Unmarshal
+	// report a type mismatch even though error and message parsed fine. The
+	// code still has to drive the narrow type.
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/test.com": {
+			status: 429,
+			body:   `{"error":"quota_exceeded","message":"Monthly request limit reached.","retry_after":"soon"}`,
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "test.com")
+
+	var quota *QuotaExceededError
+	if !errors.As(err, &quota) {
+		t.Fatalf("expected QuotaExceededError, got %T", err)
+	}
+	if quota.Code != "quota_exceeded" {
+		t.Errorf("Code = %q, want %q", quota.Code, "quota_exceeded")
+	}
+	if quota.Message != "Monthly request limit reached." {
+		t.Errorf("Message = %q, want the decoded message", quota.Message)
+	}
+	if quota.RetryAfter != 0 {
+		t.Errorf("RetryAfter = %d, want 0 from an undecodable value", quota.RetryAfter)
+	}
+}
+
+func TestErrorCodeSurvivesUnexpectedlyTypedErrors(t *testing.T) {
+	// An empty PHP array serialises as [] rather than {}, which does not fit
+	// map[string][]string.
+	srv := mockServer(t, map[string]mockRoute{
+		"/domains/bulk": {
+			status: 422,
+			body:   `{"error":"request_failed","message":"The given data was invalid.","errors":[]}`,
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.BulkDomains(context.Background(), []string{"example.com"})
+
+	var rf *RequestFailedError
+	if !errors.As(err, &rf) {
+		t.Fatalf("expected RequestFailedError, got %T", err)
+	}
+	if rf.Code != "request_failed" {
+		t.Errorf("Code = %q, want %q", rf.Code, "request_failed")
+	}
+	if rf.Errors != nil {
+		t.Errorf("Errors = %v, want nil", rf.Errors)
+	}
+}
+
+func TestNonJSONErrorBodyStillFallsBackToStatus(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/test.com": {status: 403, body: `<html>Forbidden</html>`},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "test.com")
+
+	var sub *SubscriptionRequiredError
+	if !errors.As(err, &sub) {
+		t.Fatalf("expected SubscriptionRequiredError, got %T", err)
+	}
+	if sub.Code != "unknown_error" {
+		t.Errorf("Code = %q, want unknown_error", sub.Code)
+	}
+	if sub.Message != "HTTP 403" {
+		t.Errorf("Message = %q, want %q", sub.Message, "HTTP 403")
+	}
+}
+
+func TestRetryAfterHTTPDateHeader(t *testing.T) {
+	date := time.Now().UTC().Add(90 * time.Second).Format(http.TimeFormat)
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/test.com": {
+			status:  503,
+			body:    `{"error":"temporarily_unavailable","message":"Try later."}`,
+			headers: map[string]string{"Retry-After": date},
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "test.com")
+
+	var tu *TemporarilyUnavailableError
+	if !errors.As(err, &tu) {
+		t.Fatalf("expected TemporarilyUnavailableError, got %T", err)
+	}
+	// The header carries whole seconds, so the wait lands just under 90.
+	if tu.RetryAfter < 88 || tu.RetryAfter > 90 {
+		t.Errorf("RetryAfter = %d, want ~90 from the HTTP-date form", tu.RetryAfter)
+	}
+}
+
+func TestRetryAfterPastHTTPDateClampsToZero(t *testing.T) {
+	// A past date is a parseable header, so it wins over the body and means
+	// "retry now" rather than "wait 45 seconds".
+	date := time.Now().UTC().Add(-time.Hour).Format(http.TimeFormat)
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/test.com": {
+			status:  429,
+			body:    `{"error":"rate_limited","message":"Slow down.","retry_after":45}`,
+			headers: map[string]string{"Retry-After": date},
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "test.com")
+
+	var rl *RateLimitError
+	if !errors.As(err, &rl) {
+		t.Fatalf("expected RateLimitError, got %T", err)
+	}
+	if rl.RetryAfter != 0 {
+		t.Errorf("RetryAfter = %d, want 0 from a past header date", rl.RetryAfter)
+	}
+}
+
+func TestRetryAfterZeroHeaderWinsOverBody(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/test.com": {
+			status:  503,
+			body:    `{"error":"temporarily_unavailable","message":"Try later.","retry_after":300}`,
+			headers: map[string]string{"Retry-After": "0"},
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "test.com")
+
+	var tu *TemporarilyUnavailableError
+	if !errors.As(err, &tu) {
+		t.Fatalf("expected TemporarilyUnavailableError, got %T", err)
+	}
+	if tu.RetryAfter != 0 {
+		t.Errorf("RetryAfter = %d, want 0 (a zero header means retry now)", tu.RetryAfter)
+	}
+}
+
+func TestRetryAfterUnparseableHeaderFallsBackToBody(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/test.com": {
+			status:  503,
+			body:    `{"error":"temporarily_unavailable","message":"Try later.","retry_after":300}`,
+			headers: map[string]string{"Retry-After": "in a bit"},
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "test.com")
+
+	var tu *TemporarilyUnavailableError
+	if !errors.As(err, &tu) {
+		t.Fatalf("expected TemporarilyUnavailableError, got %T", err)
+	}
+	if tu.RetryAfter != 300 {
+		t.Errorf("RetryAfter = %d, want 300 from the body", tu.RetryAfter)
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	// Half a second past the minute, so the HTTP-date cases — which carry
+	// whole seconds — exercise the round-up.
+	now := time.Date(2026, 9, 18, 12, 0, 0, int(500*time.Millisecond), time.UTC)
+
+	tests := []struct {
+		name  string
+		value string
+		want  int
+		wants bool
+	}{
+		{"absent", "", 0, false},
+		{"delta seconds", "30", 30, true},
+		{"delta seconds padded", " 30 ", 30, true},
+		{"zero", "0", 0, true},
+		{"negative delta seconds", "-5", 0, true},
+		{"http date in the future", now.Add(2 * time.Minute).Format(http.TimeFormat), 120, true},
+		{"http date rounds up", now.Add(1500 * time.Millisecond).Format(http.TimeFormat), 2, true},
+		{"http date one second out", now.Add(500 * time.Millisecond).Format(http.TimeFormat), 1, true},
+		{"http date in the past", now.Add(-time.Minute).Format(http.TimeFormat), 0, true},
+		{"http date at now", now.Format(http.TimeFormat), 0, true},
+		{"rfc850 date", now.Add(time.Minute).Format(time.RFC850), 60, true},
+		{"ansic date", now.Add(time.Minute).Format(time.ANSIC), 60, true},
+		{"garbage", "later", 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseRetryAfter(tt.value, now)
+			if got != tt.want || ok != tt.wants {
+				t.Errorf("parseRetryAfter(%q) = (%d, %t), want (%d, %t)", tt.value, got, ok, tt.want, tt.wants)
+			}
+		})
+	}
+}
+
+func TestRetryAfterHeaderReadOnAnyStatus(t *testing.T) {
+	// 502 lookup_failed carries Retry-After too, so nothing gates the parsing
+	// by status.
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/test.com": {
+			status:  502,
+			body:    `{"error":"lookup_failed","message":"RDAP lookup failed."}`,
+			headers: map[string]string{"Retry-After": "15"},
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "test.com")
+
+	var up *UpstreamError
+	if !errors.As(err, &up) {
+		t.Fatalf("expected UpstreamError, got %T", err)
+	}
+	if up.RetryAfter != 15 {
+		t.Errorf("RetryAfter = %d, want 15", up.RetryAfter)
 	}
 }

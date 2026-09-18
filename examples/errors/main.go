@@ -28,6 +28,14 @@ func main() {
 			return
 		}
 
+		// Check QuotaExceededError first: it's a 429 variant that waiting
+		// will not clear.
+		var quota *rdapapi.QuotaExceededError
+		if errors.As(err, &quota) {
+			fmt.Println("Monthly quota spent. Upgrade at https://rdapapi.io/pricing")
+			return
+		}
+
 		var rateLimited *rdapapi.RateLimitError
 		if errors.As(err, &rateLimited) {
 			fmt.Printf("Rate limited, retry after %d seconds\n", rateLimited.RetryAfter)
@@ -40,9 +48,24 @@ func main() {
 			return
 		}
 
+		// Check PlanUpgradeRequiredError first: it's a 403 variant raised on
+		// an account that is already subscribed.
+		var upgrade *rdapapi.PlanUpgradeRequiredError
+		if errors.As(err, &upgrade) {
+			fmt.Println("Bulk lookups need a Pro or Business plan")
+			return
+		}
+
+		// Branch on Code: a 403 from the CDN edge — an IP block, a WAF rule —
+		// never reaches the API, so it carries no JSON body and Code is
+		// unknown_error on an account whose billing is fine.
 		var subErr *rdapapi.SubscriptionRequiredError
 		if errors.As(err, &subErr) {
-			fmt.Println("Subscription required. Visit https://rdapapi.io/pricing")
+			if subErr.Code == "subscription_required" {
+				fmt.Println("No active subscription. Visit https://rdapapi.io/pricing")
+			} else {
+				fmt.Printf("Forbidden: %s (code: %s)\n", subErr.Message, subErr.Code)
+			}
 			return
 		}
 

@@ -26,12 +26,12 @@ func main() {
 			break
 		}
 		if tld.FieldAvailability == nil {
-			fmt.Printf(".%s via %s (not enough data yet)\n", tld.TLD, tld.RDAPServerHost)
+			fmt.Printf(".%s via %s over %s (no field stats)\n", tld.TLD, tld.Server, tld.Protocol)
 			continue
 		}
 		fmt.Printf(
 			".%s via %s: registrar=%s, expires_at=%s\n",
-			tld.TLD, tld.RDAPServerHost,
+			tld.TLD, tld.Server,
 			tld.FieldAvailability.Registrar,
 			tld.FieldAvailability.ExpiresAt,
 		)

@@ -60,6 +60,7 @@ func NewClient(apiKey string, opts ...Option) *Client {
 // requestOptions holds per-request options.
 type requestOptions struct {
 	follow      bool
+	noWhois     bool
 	since       string
 	server      string
 	ifNoneMatch string
@@ -71,6 +72,13 @@ type RequestOption func(*requestOptions)
 // WithFollow enables registrar follow-through for domain lookups.
 func WithFollow() RequestOption {
 	return func(o *requestOptions) { o.follow = true }
+}
+
+// WithoutWhois refuses the WHOIS fallback on domain lookups, so a TLD with no
+// RDAP server returns a *NotSupportedError instead of an answer read over
+// WHOIS. Applies to domain and bulk domain lookups only.
+func WithoutWhois() RequestOption {
+	return func(o *requestOptions) { o.noWhois = true }
 }
 
 // WithSince filters TLDs to those added strictly after the given ISO 8601
@@ -198,34 +206,73 @@ func (c *Client) doConditionalGet(ctx context.Context, path string, query map[st
 
 func (c *Client) handleError(resp *http.Response, body []byte) error {
 	var errBody struct {
-		Error   string `json:"error"`
-		Message string `json:"message"`
+		Error      string              `json:"error"`
+		Message    string              `json:"message"`
+		RetryAfter *int                `json:"retry_after"`
+		Errors     map[string][]string `json:"errors"`
 	}
+	// json.Unmarshal keeps every field it decoded before it reports a type
+	// mismatch, so an unexpected retry_after or errors must not cost us the
+	// code and message that parsed: fill in only what is still missing. A
+	// non-JSON body — which the CDN edge can still produce — leaves both
+	// empty, and the status code is then all we have to go on.
 	if err := json.Unmarshal(body, &errBody); err != nil {
-		errBody.Error = "unknown_error"
-		errBody.Message = fmt.Sprintf("HTTP %d", resp.StatusCode)
-	}
-
-	var retryAfter int
-	if resp.StatusCode == 429 || resp.StatusCode == 503 {
-		if v := resp.Header.Get("Retry-After"); v != "" {
-			retryAfter, _ = strconv.Atoi(v)
+		if errBody.Error == "" {
+			errBody.Error = "unknown_error"
+		}
+		if errBody.Message == "" {
+			errBody.Message = fmt.Sprintf("HTTP %d", resp.StatusCode)
 		}
 	}
 
-	return newError(resp.StatusCode, errBody.Error, errBody.Message, retryAfter)
+	// The header wins whenever it parses, a literal 0 ("retry now") included,
+	// so the body is a fallback for an absent or unreadable header only.
+	retryAfter, fromHeader := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+	if !fromHeader && errBody.RetryAfter != nil {
+		retryAfter = *errBody.RetryAfter
+	}
+
+	return newError(resp.StatusCode, errBody.Error, errBody.Message, retryAfter, errBody.Errors)
 }
 
-// Domain looks up RDAP registration data for a domain name.
+// parseRetryAfter reads a Retry-After value in either form RFC 9110 allows: a
+// delta-seconds count, or an HTTP-date, which reaches a caller verbatim when
+// the API propagates a registry's own header. The bool reports whether the
+// value was in either form; a wait already past clamps to 0 rather than going
+// negative.
+func parseRetryAfter(value string, now time.Time) (int, bool) {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+		return max(seconds, 0), true
+	}
+
+	deadline, err := http.ParseTime(value)
+	if err != nil {
+		return 0, false
+	}
+	wait := deadline.Sub(now)
+	if wait <= 0 {
+		return 0, true
+	}
+	// Round up: a fraction of a second is still a second to wait.
+	return int((wait + time.Second - 1) / time.Second), true
+}
+
+// Domain looks up registration data for a domain name, over RDAP or — for the
+// TLDs with no RDAP server — WHOIS. Meta.Source says which answered. Pass
+// WithoutWhois to refuse the fallback, and WithFollow to merge in the contacts
+// held by the registrar.
 func (c *Client) Domain(ctx context.Context, name string, opts ...RequestOption) (*DomainResponse, error) {
 	o := &requestOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
 
-	var query map[string]string
+	query := map[string]string{}
 	if o.follow {
-		query = map[string]string{"follow": "true"}
+		query["follow"] = "true"
+	}
+	if o.noWhois {
+		query["whois"] = "false"
 	}
 
 	data, err := c.doGet(ctx, "/domain/"+name, query)
@@ -366,6 +413,10 @@ func (c *Client) TLD(ctx context.Context, tld string, opts ...RequestOption) (*T
 
 // BulkDomains looks up multiple domains in a single request.
 // Requires a Pro or Business plan. Up to 10 domains per call.
+//
+// A failing domain does not fail the request: the call returns successfully and
+// each entry carries its own Status, so check every entry. WithFollow and
+// WithoutWhois apply to every domain in the request.
 func (c *Client) BulkDomains(ctx context.Context, domains []string, opts ...RequestOption) (*BulkDomainResponse, error) {
 	o := &requestOptions{}
 	for _, opt := range opts {
@@ -375,6 +426,9 @@ func (c *Client) BulkDomains(ctx context.Context, domains []string, opts ...Requ
 	body := map[string]any{"domains": domains}
 	if o.follow {
 		body["follow"] = true
+	}
+	if o.noWhois {
+		body["whois"] = false
 	}
 
 	data, err := c.doPost(ctx, "/domains/bulk", body)
@@ -396,5 +450,20 @@ func (c *Client) BulkDomains(ctx context.Context, domains []string, opts ...Requ
 		}
 	}
 
+	return &result, nil
+}
+
+// Ping reports whether the API is reachable. It consumes no quota and makes no
+// upstream RDAP call, but still authenticates: a valid API key is required.
+func (c *Client) Ping(ctx context.Context) (*PingResponse, error) {
+	data, err := c.doGet(ctx, "/ping", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result PingResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("rdapapi: decoding response: %w", err)
+	}
 	return &result, nil
 }

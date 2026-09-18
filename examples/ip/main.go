@@ -28,4 +28,7 @@ func main() {
 	}
 	fmt.Printf("CIDR: %v\n", ip.CIDR)
 	fmt.Printf("Status: %v\n", ip.Status)
+	if ip.Geofeed != nil {
+		fmt.Printf("Geofeed: %s\n", *ip.Geofeed)
+	}
 }

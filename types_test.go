@@ -39,6 +39,8 @@ func TestDomainResponseUnmarshal(t *testing.T) {
 			}
 		},
 		"meta": {
+			"server": "rdap.example.com",
+			"source": "rdap",
 			"rdap_server": "https://rdap.example.com",
 			"raw_rdap_url": "https://rdap.example.com/domain/example.com",
 			"cached": false,
@@ -72,8 +74,8 @@ func TestDomainResponseUnmarshal(t *testing.T) {
 	if len(resp.Nameservers) != 2 {
 		t.Errorf("Nameservers len = %d, want 2", len(resp.Nameservers))
 	}
-	if !resp.DNSSEC {
-		t.Error("DNSSEC = false, want true")
+	if resp.DNSSEC == nil || !*resp.DNSSEC {
+		t.Errorf("DNSSEC = %v, want true", resp.DNSSEC)
 	}
 	if resp.Entities.Registrant == nil {
 		t.Fatal("Entities.Registrant is nil")
@@ -81,6 +83,13 @@ func TestDomainResponseUnmarshal(t *testing.T) {
 	assertStringPtr(t, "Registrant.Name", resp.Entities.Registrant.Name, "John Doe")
 	assertStringPtr(t, "Registrant.Organization", resp.Entities.Registrant.Organization, "Example Inc.")
 	assertStringPtr(t, "Registrant.CountryCode", resp.Entities.Registrant.CountryCode, "US")
+	assertStringPtr(t, "Meta.Server", resp.Meta.Server, "rdap.example.com")
+	if resp.Meta.Source != ProtocolRDAP {
+		t.Errorf("Meta.Source = %q, want %q", resp.Meta.Source, ProtocolRDAP)
+	}
+	if resp.Redacted != nil {
+		t.Error("Redacted should be nil when the server declared nothing")
+	}
 	if resp.Meta.RDAPServer != "https://rdap.example.com" {
 		t.Errorf("Meta.RDAPServer = %q, want %q", resp.Meta.RDAPServer, "https://rdap.example.com")
 	}
@@ -146,6 +155,7 @@ func TestIpResponseUnmarshal(t *testing.T) {
 			}
 		},
 		"cidr": ["8.8.8.0/24"],
+		"geofeed": "https://geofeed.example.com/geofeed.txt",
 		"remarks": [{"title": "Note", "description": "For Google DNS"}],
 		"port43": "whois.arin.net",
 		"meta": {"rdap_server": "https://rdap.arin.net", "raw_rdap_url": "https://rdap.arin.net/ip/8.8.8.8", "cached": true, "cache_expires": "2024-08-14T08:00:00Z"}
@@ -167,6 +177,7 @@ func TestIpResponseUnmarshal(t *testing.T) {
 	if len(resp.CIDR) != 1 || resp.CIDR[0] != "8.8.8.0/24" {
 		t.Errorf("CIDR = %v, want [8.8.8.0/24]", resp.CIDR)
 	}
+	assertStringPtr(t, "Geofeed", resp.Geofeed, "https://geofeed.example.com/geofeed.txt")
 	if len(resp.Remarks) != 1 {
 		t.Fatalf("Remarks len = %d, want 1", len(resp.Remarks))
 	}
@@ -191,6 +202,7 @@ func TestAsnResponseUnmarshal(t *testing.T) {
 		"type": "DIRECT ALLOCATION",
 		"start_autnum": 15169,
 		"end_autnum": 15169,
+		"country": "US",
 		"status": ["active"],
 		"dates": {"registered": "2000-03-10T00:00:00Z", "expires": null, "updated": "2012-02-24T00:00:00Z"},
 		"entities": {},
@@ -213,6 +225,7 @@ func TestAsnResponseUnmarshal(t *testing.T) {
 	if resp.EndAutnum == nil || *resp.EndAutnum != 15169 {
 		t.Errorf("EndAutnum = %v, want 15169", resp.EndAutnum)
 	}
+	assertStringPtr(t, "Country", resp.Country, "US")
 	assertStringPtr(t, "Port43", resp.Port43, "whois.arin.net")
 }
 
@@ -379,7 +392,7 @@ func TestMarshalRoundTrip(t *testing.T) {
 		Registrar:   Registrar{Name: s("Test Reg")},
 		Dates:       Dates{Registered: s("2020-01-01T00:00:00Z")},
 		Nameservers: []string{"ns1.test.com"},
-		DNSSEC:      true,
+		DNSSEC:      b(true),
 		Entities:    Entities{},
 		Meta: Meta{
 			RDAPServer:   "https://rdap.test.com",
@@ -403,8 +416,8 @@ func TestMarshalRoundTrip(t *testing.T) {
 	if decoded.Domain != original.Domain {
 		t.Errorf("Domain = %q, want %q", decoded.Domain, original.Domain)
 	}
-	if decoded.DNSSEC != original.DNSSEC {
-		t.Errorf("DNSSEC = %v, want %v", decoded.DNSSEC, original.DNSSEC)
+	if decoded.DNSSEC == nil || *decoded.DNSSEC != *original.DNSSEC {
+		t.Errorf("DNSSEC = %v, want %v", decoded.DNSSEC, *original.DNSSEC)
 	}
 	if decoded.Meta.Cached != original.Meta.Cached {
 		t.Errorf("Meta.Cached = %v, want %v", decoded.Meta.Cached, original.Meta.Cached)
@@ -479,6 +492,148 @@ func TestDatesInvalidStringReturnsFalse(t *testing.T) {
 	}
 	if _, ok := d.ExpiresInDays(); ok {
 		t.Error("ExpiresInDays should return false for invalid string")
+	}
+}
+
+func TestDomainResponseRedactionAndNullDnssec(t *testing.T) {
+	raw := `{
+		"domain": "example.com",
+		"status": [],
+		"registrar": {},
+		"dates": {},
+		"nameservers": [],
+		"dnssec": null,
+		"entities": {},
+		"redacted": {
+			"handle": "replacementValue",
+			"registrar": {"iana_id": "replacementValue"},
+			"entities": {"registrant": {"name": "emptyValue", "email": "removal"}}
+		},
+		"meta": {"server": "rdap.example.com", "source": "rdap"}
+	}`
+
+	var resp DomainResponse
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if resp.DNSSEC != nil {
+		t.Errorf("DNSSEC = %v, want nil (registry publishes no status)", *resp.DNSSEC)
+	}
+	if resp.Redacted == nil {
+		t.Fatal("Redacted is nil")
+	}
+	if resp.Redacted.Handle == nil || *resp.Redacted.Handle != RedactionReplacementValue {
+		t.Errorf("Redacted.Handle = %v, want %q", resp.Redacted.Handle, RedactionReplacementValue)
+	}
+	if got := resp.Redacted.Registrar["iana_id"]; got != RedactionReplacementValue {
+		t.Errorf("Redacted.Registrar[iana_id] = %q, want %q", got, RedactionReplacementValue)
+	}
+	if got := resp.Redacted.Entities["registrant"]["name"]; got != RedactionEmptyValue {
+		t.Errorf("Redacted.Entities[registrant][name] = %q, want %q", got, RedactionEmptyValue)
+	}
+	if got := resp.Redacted.Entities["registrant"]["email"]; got != RedactionRemoval {
+		t.Errorf("Redacted.Entities[registrant][email] = %q, want %q", got, RedactionRemoval)
+	}
+}
+
+func TestRedactionMethodPassesUnknownValueThrough(t *testing.T) {
+	var r Redaction
+	if err := json.Unmarshal([]byte(`{"entities":{"registrant":{"name":"someFutureMethod"}}}`), &r); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if got := r.Entities["registrant"]["name"]; got != "someFutureMethod" {
+		t.Errorf("method = %q, want it passed through unchanged", got)
+	}
+}
+
+func TestDomainResponseFromWhoisSource(t *testing.T) {
+	raw := `{
+		"domain": "example.it",
+		"status": [],
+		"registrar": {},
+		"dates": {},
+		"nameservers": [],
+		"dnssec": null,
+		"entities": {},
+		"meta": {"server": "whois.nic.it", "source": "whois", "cached": false}
+	}`
+
+	var resp DomainResponse
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if resp.Meta.Source != ProtocolWHOIS {
+		t.Errorf("Meta.Source = %q, want %q", resp.Meta.Source, ProtocolWHOIS)
+	}
+	assertStringPtr(t, "Meta.Server", resp.Meta.Server, "whois.nic.it")
+	// WHOIS has no URL form, so neither RDAP field is sent.
+	if resp.Meta.RDAPServer != "" {
+		t.Errorf("Meta.RDAPServer = %q, want empty", resp.Meta.RDAPServer)
+	}
+	if resp.Meta.RawRDAPURL != "" {
+		t.Errorf("Meta.RawRDAPURL = %q, want empty", resp.Meta.RawRDAPURL)
+	}
+}
+
+func TestIpResponseNullGeofeedAndRedaction(t *testing.T) {
+	raw := `{
+		"handle": "NET-1",
+		"status": [],
+		"dates": {},
+		"entities": {},
+		"cidr": [],
+		"geofeed": null,
+		"remarks": [],
+		"port43": null,
+		"redacted": {"entities": {"registrant": {"email": "removal"}}},
+		"meta": {"server": "rdap.arin.net", "source": "rdap"}
+	}`
+
+	var resp IpResponse
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if resp.Geofeed != nil {
+		t.Errorf("Geofeed = %q, want nil", *resp.Geofeed)
+	}
+	if resp.Redacted == nil || resp.Redacted.Entities["registrant"]["email"] != RedactionRemoval {
+		t.Error("Redacted.Entities[registrant][email] should be removal")
+	}
+}
+
+func TestTldEntryWhoisProtocol(t *testing.T) {
+	raw := `{
+		"tld": "it",
+		"protocol": "whois",
+		"supported_since": "2026-08-01T00:00:00Z",
+		"server": "whois.nic.it",
+		"rdap_server_host": null,
+		"rdap_server_url": null,
+		"field_availability": null
+	}`
+
+	var entry TldEntry
+	if err := json.Unmarshal([]byte(raw), &entry); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if entry.Protocol != ProtocolWHOIS {
+		t.Errorf("Protocol = %q, want %q", entry.Protocol, ProtocolWHOIS)
+	}
+	if entry.Server != "whois.nic.it" {
+		t.Errorf("Server = %q, want %q", entry.Server, "whois.nic.it")
+	}
+	if entry.RDAPServerHost != nil {
+		t.Errorf("RDAPServerHost = %q, want nil for a WHOIS TLD", *entry.RDAPServerHost)
+	}
+	if entry.RDAPServerURL != nil {
+		t.Errorf("RDAPServerURL = %q, want nil for a WHOIS TLD", *entry.RDAPServerURL)
+	}
+	if entry.FieldAvailability != nil {
+		t.Error("FieldAvailability should be nil for a WHOIS TLD")
 	}
 }
 

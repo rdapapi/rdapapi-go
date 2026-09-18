@@ -30,7 +30,21 @@ func main() {
 	}
 	fmt.Printf("Status: %v\n", domain.Status)
 	fmt.Printf("Nameservers: %v\n", domain.Nameservers)
-	fmt.Printf("DNSSEC: %v\n", domain.DNSSEC)
+	if domain.DNSSEC != nil {
+		fmt.Printf("DNSSEC: %v\n", *domain.DNSSEC)
+	} else {
+		fmt.Println("DNSSEC: not published by this registry")
+	}
+	fmt.Printf("Answered over %s\n", domain.Meta.Source)
+
+	// What the registry declared it withheld, where it declared anything.
+	if domain.Redacted != nil {
+		for role, fields := range domain.Redacted.Entities {
+			for field, method := range fields {
+				fmt.Printf("Redacted: %s.%s (%s)\n", role, field, method)
+			}
+		}
+	}
 
 	// With registrar follow-through.
 	followed, err := client.Domain(context.Background(), "google.com", rdapapi.WithFollow())
