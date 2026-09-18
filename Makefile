@@ -1,4 +1,4 @@
-.PHONY: test lint fmt vet cover vuln
+.PHONY: test lint fmt vet cover vuln canary
 
 test:
 	go test -race -count=1 ./...
@@ -18,3 +18,7 @@ vet:
 
 vuln:
 	govulncheck ./...
+
+# Probes production through the public API. Needs RDAPAPI_API_KEY.
+canary:
+	go test -tags canary -count=1 -v -run TestCanary .

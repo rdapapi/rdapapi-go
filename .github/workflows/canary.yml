@@ -1,0 +1,46 @@
+name: Canary
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    name: Probe production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+          cache: false
+
+      - name: Check for the API key
+        id: key
+        env:
+          RDAPAPI_API_KEY: ${{ secrets.RDAPAPI_API_KEY }}
+        run: |
+          if [ -z "$RDAPAPI_API_KEY" ]; then
+            echo "::warning::RDAPAPI_API_KEY is not set, so the canary is unconfigured and did not run."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Probe production
+        if: steps.key.outputs.configured == 'true'
+        env:
+          RDAPAPI_API_KEY: ${{ secrets.RDAPAPI_API_KEY }}
+        run: go test -tags canary -count=1 -v -run TestCanary .
