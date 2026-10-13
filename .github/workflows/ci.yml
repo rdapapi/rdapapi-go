@@ -35,7 +35,7 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.10
+          version: v2.14
 
       - name: Check formatting
         run: |

@@ -44,7 +44,7 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.10
+          version: v2.14
 
       - name: Test
         run: go test -race -coverprofile=coverage.out -coverpkg=github.com/rdapapi/rdapapi-go ./...
