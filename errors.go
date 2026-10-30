@@ -100,7 +100,7 @@ func (e *QuotaExceededError) Unwrap() error { return e.RateLimitError }
 // TemporarilyUnavailableError is returned when the domain data is temporarily unavailable (HTTP 503).
 type TemporarilyUnavailableError struct{ *APIError }
 
-// UpstreamError is returned when the upstream RDAP server fails (HTTP 502).
+// UpstreamError is returned when the upstream RDAP server fails (lookup_failed, bad_gateway).
 type UpstreamError struct{ *APIError }
 
 // TimeoutError is returned when the request did not complete in time
@@ -160,6 +160,10 @@ func newError(statusCode int, code, message string, retryAfter int, fieldErrors 
 	case 502:
 		return &UpstreamError{base}
 	case 503:
+		// The API sends lookup_failed as 503, as its CDN replaces 502 bodies.
+		if code == "lookup_failed" {
+			return &UpstreamError{base}
+		}
 		return &TemporarilyUnavailableError{base}
 	case 504:
 		return &TimeoutError{base}

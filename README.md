@@ -291,7 +291,7 @@ Check the narrow type first, as in the example above.
 | `RateLimitError` | 429 | `rate_limit_exceeded`, `too_many_requests` |
 | `QuotaExceededError` | 429 | `quota_exceeded` |
 | `RequestFailedError` | 422 | `request_failed` |
-| `UpstreamError` | 502 | `lookup_failed`, `bad_gateway` |
+| `UpstreamError` | 503, 502 | `lookup_failed` (503), `bad_gateway` (502) |
 | `TemporarilyUnavailableError` | 503 | `temporarily_unavailable`, `service_unavailable` |
 | `TimeoutError` | 504 | `gateway_timeout` |
 | `APIError` | any other | `method_not_allowed` (405), `payload_too_large` (413), `server_error` (5xx) |

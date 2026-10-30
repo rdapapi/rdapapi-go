@@ -348,6 +348,7 @@ func TestEveryErrorUnwrapsToAPIError(t *testing.T) {
 		{429, "rate_limit_exceeded", "*rdapapi.RateLimitError"},
 		{429, "quota_exceeded", "*rdapapi.QuotaExceededError"},
 		{502, "lookup_failed", "*rdapapi.UpstreamError"},
+		{503, "lookup_failed", "*rdapapi.UpstreamError"},
 		{503, "temporarily_unavailable", "*rdapapi.TemporarilyUnavailableError"},
 		{504, "gateway_timeout", "*rdapapi.TimeoutError"},
 		{500, "server_error", "*rdapapi.APIError"},
