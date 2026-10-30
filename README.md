@@ -286,7 +286,7 @@ Check the narrow type first, as in the example above.
 | `AuthenticationError` | 401 | `unauthenticated` |
 | `SubscriptionRequiredError` | 403 | `subscription_required`, `unknown_error` (see below) |
 | `PlanUpgradeRequiredError` | 403 | `plan_upgrade_required` |
-| `NotFoundError` | 404 | `not_found` |
+| `NotFoundError` | 404 | `not_found`, `domain_reserved`, `not_registrable` |
 | `NotSupportedError` | 404 | `not_supported` |
 | `RateLimitError` | 429 | `rate_limit_exceeded`, `too_many_requests` |
 | `QuotaExceededError` | 429 | `quota_exceeded` |
@@ -297,8 +297,9 @@ Check the narrow type first, as in the example above.
 | `APIError` | any other | `method_not_allowed` (405), `payload_too_large` (413), `server_error` (5xx) |
 
 All typed errors embed `*APIError`, which provides `StatusCode`, `Code`, `Message`,
-`RetryAfter` and `Errors`. Branch on `Code`, never on `Message`: the message is display
-text that may be reworded at any time, and any code can answer any endpoint.
+`RetryAfter`, `Errors`, `Reason` and `RegistrableDomain`. Branch on `Code`, never on
+`Message`: the message is display text that may be reworded at any time, and any code
+can answer any endpoint.
 
 Every typed error also unwraps to `*APIError`, so one catch-all matches anything the
 SDK returns and is the right last arm after the narrower checks:
@@ -344,6 +345,10 @@ if errors.As(err, &reqFailed) {
     }
 }
 ```
+
+On a `NotFoundError`, `Reason` holds the registry's wording for `domain_reserved` and
+`RegistrableDomain` the name to look up instead for `not_registrable`; a failed bulk
+result carries both too.
 
 An error body that is not JSON — which the CDN edge can still produce — yields the type
 for the status with `Code` set to `unknown_error`. Treat it as a retryable transport

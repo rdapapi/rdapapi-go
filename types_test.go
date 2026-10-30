@@ -380,6 +380,42 @@ func TestBulkDomainResponseUnmarshal(t *testing.T) {
 	}
 }
 
+func TestBulkDomainResultCarriesReasonAndRegistrableDomain(t *testing.T) {
+	raw := `{
+		"results": [
+			{
+				"domain": "si.si",
+				"status": "error",
+				"error": "domain_reserved",
+				"message": "This domain is reserved by the registry.",
+				"reason": "si.si is forbidden (Rezervirano za RS)"
+			},
+			{
+				"domain": "www.example.com",
+				"status": "error",
+				"error": "not_registrable",
+				"message": "www.example.com is not a registrable domain.",
+				"registrable_domain": "example.com"
+			}
+		],
+		"summary": {"total": 2, "successful": 0, "failed": 2}
+	}`
+
+	var resp BulkDomainResponse
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	assertStringPtr(t, "Results[0].Reason", resp.Results[0].Reason, "si.si is forbidden (Rezervirano za RS)")
+	if resp.Results[0].RegistrableDomain != nil {
+		t.Errorf("Results[0].RegistrableDomain = %q, want nil", *resp.Results[0].RegistrableDomain)
+	}
+	assertStringPtr(t, "Results[1].RegistrableDomain", resp.Results[1].RegistrableDomain, "example.com")
+	if resp.Results[1].Reason != nil {
+		t.Errorf("Results[1].Reason = %q, want nil", *resp.Results[1].Reason)
+	}
+}
+
 func TestMarshalRoundTrip(t *testing.T) {
 	s := func(v string) *string { return &v }
 	b := func(v bool) *bool { return &v }

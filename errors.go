@@ -14,6 +14,12 @@ type APIError struct {
 	// Errors names the fields that failed validation, set on a 422
 	// request_failed and nil otherwise.
 	Errors map[string][]string
+	// Reason is the registry's own wording on a 404 domain_reserved, and
+	// empty otherwise.
+	Reason string
+	// RegistrableDomain is the name to look up instead, set on a 404
+	// not_registrable (example.com for www.example.com) and empty otherwise.
+	RegistrableDomain string
 }
 
 // Error implements the error interface.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -206,10 +207,12 @@ func (c *Client) doConditionalGet(ctx context.Context, path string, query map[st
 
 func (c *Client) handleError(resp *http.Response, body []byte) error {
 	var errBody struct {
-		Error      string              `json:"error"`
-		Message    string              `json:"message"`
-		RetryAfter *int                `json:"retry_after"`
-		Errors     map[string][]string `json:"errors"`
+		Error             string              `json:"error"`
+		Message           string              `json:"message"`
+		RetryAfter        *int                `json:"retry_after"`
+		Errors            map[string][]string `json:"errors"`
+		Reason            string              `json:"reason"`
+		RegistrableDomain string              `json:"registrable_domain"`
 	}
 	// json.Unmarshal keeps every field it decoded before it reports a type
 	// mismatch, so an unexpected retry_after or errors must not cost us the
@@ -232,7 +235,13 @@ func (c *Client) handleError(resp *http.Response, body []byte) error {
 		retryAfter = *errBody.RetryAfter
 	}
 
-	return newError(resp.StatusCode, errBody.Error, errBody.Message, retryAfter, errBody.Errors)
+	err := newError(resp.StatusCode, errBody.Error, errBody.Message, retryAfter, errBody.Errors)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		apiErr.Reason = errBody.Reason
+		apiErr.RegistrableDomain = errBody.RegistrableDomain
+	}
+	return err
 }
 
 // parseRetryAfter reads a Retry-After value in either form RFC 9110 allows: a

@@ -1601,6 +1601,54 @@ func TestBulkDomainsRequestFailed(t *testing.T) {
 	}
 }
 
+func TestDomainReservedCarriesReason(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/si.si": {
+			status: 404,
+			body:   `{"error":"domain_reserved","message":"This domain is reserved by the registry.","reason":"si.si is forbidden (Rezervirano za RS)"}`,
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "si.si")
+
+	var nf *NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("expected NotFoundError, got %T", err)
+	}
+	if nf.Reason != "si.si is forbidden (Rezervirano za RS)" {
+		t.Errorf("Reason = %q, want the registry's wording", nf.Reason)
+	}
+	if nf.RegistrableDomain != "" {
+		t.Errorf("RegistrableDomain = %q, want empty", nf.RegistrableDomain)
+	}
+}
+
+func TestDomainNotRegistrableCarriesRegistrableDomain(t *testing.T) {
+	srv := mockServer(t, map[string]mockRoute{
+		"/domain/www.example.com": {
+			status: 404,
+			body:   `{"error":"not_registrable","message":"www.example.com is not a registrable domain.","registrable_domain":"example.com"}`,
+		},
+	})
+	defer srv.Close()
+
+	c := NewClient("key", WithBaseURL(srv.URL))
+	_, err := c.Domain(context.Background(), "www.example.com")
+
+	var nf *NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("expected NotFoundError, got %T", err)
+	}
+	if nf.RegistrableDomain != "example.com" {
+		t.Errorf("RegistrableDomain = %q, want %q", nf.RegistrableDomain, "example.com")
+	}
+	if nf.Reason != "" {
+		t.Errorf("Reason = %q, want empty", nf.Reason)
+	}
+}
+
 func TestDomainGatewayTimeout(t *testing.T) {
 	srv := mockServer(t, map[string]mockRoute{
 		"/domain/slow.com": {

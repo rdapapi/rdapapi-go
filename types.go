@@ -297,6 +297,10 @@ type BulkDomainResult struct {
 	Data    *DomainResponse `json:"data,omitempty"`
 	Error   *string         `json:"error,omitempty"`
 	Message *string         `json:"message,omitempty"`
+	// Reason and RegistrableDomain carry what the single-lookup APIError
+	// does on domain_reserved and not_registrable, and are nil otherwise.
+	Reason            *string `json:"reason,omitempty"`
+	RegistrableDomain *string `json:"registrable_domain,omitempty"`
 	// RawMeta is the entry-level meta. On a successful entry it is merged into
 	// Data.Meta and left nil. On a failed one it holds the partial meta —
 	// Server and Source alone — naming the upstream that was tried, and is nil
